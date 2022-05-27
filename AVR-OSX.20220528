@@ -332,11 +332,10 @@ keeping its dependencies, to rebuild it from (patched) source:
 
 > [sudo] port uninstall avrdude
 
-the dependent ports required to build avrdude (as well as dfu-programmer)
-remain installed. note, however, that these dependencies may be classified
-as 'leaves' by the MacPorts database if they were not explicity installed
-and have no other dependent ports. in the event of tidying up unused ports
-for example, a command like:
+the dependent ports required to build avrdude remain installed. note that
+these dependencies may be classified as 'leaves' by the MacPorts database
+if they were not explicity installed and have no other dependent ports. in
+the event of tidying up unused ports for example, a command like:
 
 # > [sudo] port uninstall --follow-dependencies leaves
 
