@@ -1,0 +1,447 @@
+################################################################################
+
+these are instructions for building an AVR GNU toolchain on OS X (Darwin),
+and the AVRDUDE utility for use with the (Olimex) AVR-ISP-MK2 programmer.
+it assumes familiarity with basic shell, command line tools, and MacPorts.
+
+## Author: Brett Hale (brettyhale@gmail.c0m)
+## SPDX-License-Identifier: CC0-1.0
+## revision: 20220528
+
+OS X 10.15.7 (Catalina) x86_64-apple-darwin19.6.0 (MacPorts 2.7.2)
+
+################################################################################
+
+Q: why would we want to do this when MacPorts already provides us with an
+AVR GNU toolchain, as well as AVRDUDE? all of which (as of this date) use
+the latest releases of nearly all the required packages and tools?
+
+there's no good reason if you're happy with the MacPorts infrastructure;
+however, there may be good reasons to build the 'cutting edge' tools with
+different requirements - or quarantine the cross compiler infrastructure,
+as these instructions will.
+
+another reason is that these instructions may provide enough information
+to build the infrastructure on other UN*X / BSD platforms; but throughout
+these instructions, OS X (Darwin), as well as the MacPorts infrastructure
+are assumed.
+
+--
+
+note: for a TexLive distribution (for document processing) use MacTex, or,
+if the OS X version is earlier than 10.14, follow the instructions here:
+
+https://tug.org/mactex/index.html
+installs the TexLive distribution in: /usr/local/texlive/2022
+
+################################################################################
+
+by using MacPorts, we can use the native gcc-11.3.0 compiler, which should
+avoid many of the bootstrapping issues when building gcc cross compilers
+and the related GNU tools. it is better to enter a new shell when building
+the cross-compiler infrastructure, so that it isn't 'visible' in the $PATH
+or $DYLD_LIBRARY_PATH when not in use.
+
+> export SDKROOT="`xcrun --show-sdk-path`"
+
+> export CROSSDIR="${HOME}/cross"
+> export PATH="${CROSSDIR}/bin:${PATH}"
+> export DYLD_LIBRARY_PATH="${CROSSDIR}/lib:${DYLD_LIBRARY_PATH}"
+> [rehash]
+
+note: explicitly setting: $DYLD_LIBRARY_PATH is only recommended during
+development, to ensure that toolchain components link to libraries within
+the cross-compiler infrastructure prior to a MacPort or system version.
+those adapting this guide for platforms using ELF ABIs should likewise be
+cautious about setting: $LD_LIBRARY_PATH
+
+other shells may set environment variables with a different syntax, while
+executables may need to be added to the shell's lookup (hash) tables after
+installing each new component, via an explicit 'rehash' for example. it is
+STRONGLY advised that the GNU 'bash' shell be used, as these instructions
+will assume from this point.
+
+the latest stable MacPort of gcc at this time is gcc-11.3.0.
+the dialects default to 'gnu17' and 'gnu++17' for C and C++ respectively,
+but we set them explicitly in this example:
+
+> export CC="gcc-mp-11 -std=gnu17"; export CXX="g++-mp-11 -std=gnu++17"
+
+note: it is expected that a gcc-12.x port will be available sometime soon.
+this should not affect these instructions other than a need to substitute:
+gcc-mp-11, g++-mp-11 with: gcc-mp-12, g++-mp-12 respectively.
+
+it is recommended that CPP be explicitly set. in theory the compiler can
+be used to invoke the preprocessor, but some packages may assume that the
+system 'cpp' program will suffice. that might not be the case:
+
+> export CPP="$CC -E"; export CXXCPP="$CXX -E"
+
+most of the toolchain can be built with basic host optimization settings.
+there's nothing to be gained by enabling excessive warnings. for example:
+
+> export C[XX]FLAGS="-pipe -Wall -O2 -march=native [-fno-math-errno]"
+
+where these settings are not appropriate, the instructions will explicitly
+assign the environment variables as required. note that '-fno-math-errno'
+is specifically recommended for Darwin - but everyone should be encouraged
+to only rely on IEEE-754 NaN payloads / exceptions for errors. </rant>
+
+note: when building packages it is good practice to create, and configure
+from, a 'build' directory. this convention is adopted all throughout these
+instructions, using '$top_srcdir/build', and should work for any correctly
+configured package using the GNU autotools. the ports: autoconf, automake,
+libtool, and pkgconfig should be installed if they are not already.
+in theory, these shouldn't be necessary. in practice, building from source
+requires a lot of supporting infrastructure.
+
+just to be on the safe side, promote (MacPorts) GNU utilities:
+
+> export MAKE=gmake; export M4=gm4; export AWK=gawk; export SED=gsed
+> alias make=$MAKE # invoke GNU make
+
+################################################################################
+
+gcc uses the GMP, MPFR, and MPC libraries to optimize numeric expressions
+at compile-time. these need only be built *once* for re-use in each cross
+compiler / toolchain. this is also true of the isl and libiconv libraries.
+
+
+## gmp-6.2.1 @ gmplib.org
+
+> ../configure --prefix=$CROSSDIR --enable-cxx [--disable-fft]
+> make [check]; make install
+
+the 'ABI=64' option is not required for this platform. '--enable-cxx' is
+required for C++ class bindings, while '--enable-fft' - the fast fourier
+transform - is of no use to compiler optimizations. both may be of use to
+other applications, so they might as well be built.
+
+BTW, there's a useful little program called 'calc', which may be built by
+going into the build directory: 'demos/calc' and invoking: 'make calc'.
+it's a fast bignum calculator with some useful number theoretic functions.
+the result is a shell-script wrapper for a file in '.libs' setting the
+dynamic link path to the uninstalled gmp library - libtool magic for test
+programs that rely on uninstalled libraries. consider moving '.libs/calc'
+to '$CROSSDIR/bin/calc' to keep it.
+
+## mpfr-4.1.0 @ mpfr.org
+
+the MPFR library performs multiple-precision floating-point calculations
+with correct rounding and well-defined semantics, much in the same way as
+the IEEE-754 (and successive) standards.
+
+> ../configure --prefix=$CROSSDIR --with-gmp=$CROSSDIR
+> make [check]; make install
+
+## mpc-1.2.1 @ multiprecision.org
+
+the MPC library performs multiple-precision floating-point calculations
+on *complex* numbers. it is built on the MPFR floating-point library, with
+the same emphasis on correct rounding and semantics.
+
+> ../configure --prefix=$CROSSDIR \
+--with-gmp=$CROSSDIR --with-mpfr=$CROSSDIR
+> make [check]; make install
+
+
+## isl-0.24 @ libisl.sourceforge.io
+
+the isl library is required for gcc's 'graphite' loop optimizations.
+
+> ../configure --prefix=$CROSSDIR --with-gmp-prefix=$CROSSDIR
+> make [check]; make install
+
+
+## libiconv-1.17 @ https://ftp.gnu.org/gnu/libiconv
+
+the libiconv library (version 1.11) as provided by OS X 10.15.7, is too
+old. in any case, we would prefer not to rely on a MacPort installation.
+
+> ../configure --prefix=$CROSSDIR --disable-nls
+> make [check]; make install
+
+
+** zstd-1.5.2 @ facebook.github.io/zstd
+
+gcc can now use zstd as a compression algorithm for LTO bytecode. while it
+may be a technically superior solution, building from source is not a good
+fit with the (autotools) infrastructure.
+
+note: zstd may already be installed as a MacPort, with dependencies that
+conflict with it being linked in a gcc build, requiring: '--with-zstd=no'
+
+################################################################################
+
+AVR GNU toolchain : binutils-2.38, gcc-12.1.0, avr-libc-2.1.0
+
+################################################################################
+
+## binutils-2.38 @ https://ftp.gnu.org/gnu/binutils : avr
+
+> ../configure --prefix=$CROSSDIR --target=avr \
+--disable-nls --disable-werror
+> make [check]; make install; [rehash]
+> make install-html; make install-pdf # (requires a TeX distribution)
+
+there is an issue building the pdfs: '/usr/bin/texi2dvi' as provided by
+OS X 10.15.7 (Texinfo 4.8), is too old. installing the 'texinfo' MacPort
+provides texi2dvi (Texinfo 6.8), adding the '--build-dir' option.
+
+note: there has been no attempt to enable the 'gold' (ld.gold) linker for
+this target via: '--enable-gold', nor has support for linker plugins been
+enabled via: '--enable-plugins' - it is not clear that it would useful in
+any case. furthermore, 'gold' development appears to have stalled - we'll
+wait and see if the 'mold' linker has more success...
+
+--
+
+## gcc-12.1.0 @ gcc.gnu.org : avr
+
+a gcc compiler is required to bootstrap a gcc build, which is emphasized
+in almost every installation guide. with the MacPorts gcc-11.3.0 compiler,
+we already have $CC and $CXX set, but $C[XX]FLAGS may not be appropriate
+for different cross build stages. set them to something safe:
+
+> export C[XX]FLAGS="-pipe -O2"
+
+this patch apparently avoids some SIP / DYLD_LIBRARY_PATH issues:
+github.com/macports/macports-ports/blob/master/lang/gcc11/files/\
+patch-disable-dyld_library_path.diff
+
+apply the following patch files in the top-level source directory:
+
+> patch -b -i patch-disable-dyld_library_path.diff
+
+
+disable 'gcov' for now, as it results in a build error:
+
+In file included from ../../../libgcc/libgcov-merge.c:26:
+../../../libgcc/libgcov.h:49:10: fatal error: sys/mman.h: \
+No such file or directory
+   49 | #include <sys/mman.h>
+
+we don't require gcov in the cross compiler infrastructure. there may be
+a (non-obvious) option to make this work correctly, or a pending bug fix.
+undefining 'HAVE_SYS_MMAN_H' may also work. (untested)
+
+
+> ../configure --target=avr \
+--with-avrlibc --with-double=64 --with-long-double=double \
+--prefix=$CROSSDIR --with-local-prefix=$CROSSDIR \
+--enable-languages=c --with-dwarf2 \
+--disable-gcov --disable-libssp --disable-nls \
+--disable-werror --disable-checking --disable-bootstrap \
+--with-gmp=$CROSSDIR --with-mpfr=$CROSSDIR --with-mpc=$CROSSDIR \
+--with-isl=$CROSSDIR --with-libiconv-prefix=$CROSSDIR \
+--with-system-zlib=no --with-zstd=no
+
+configure reports the following as disabled, or not supported:
+
+libgomp libatomic libitm libsanitizer libvtv libquadmath libssp
+libstdc++-v3 libphobos gnattools gotools libada zlib libbacktrace
+libgfortran libgo libffi libobjc liboffloadmic
+
+the multilib gcc startup and runtime support libraries for the different
+AVR ISAs are built with the appropriate flags and optimizations.
+
+> make; make install; [rehash]
+> make install-html; make install-pdf # (requires a TeX distribution)
+
+--
+
+## avr-libc-2.1.0 @ github.com/avrdudes/avr-libc
+
+previously hosted @ download.savannah.gnu.org/releases/avr-libc
+
+the autotools are required for the github source code to bootstrap the
+build infrastructure with: 'sh ./bootstrap' in the top level directory.
+
+> CC="avr-gcc-12.1.0" ../configure \
+--prefix=$CROSSDIR --build=`../config.guess` --host=avr \
+--enable-debug-info=dwarf-2
+> make; make install
+
+since avr-gcc was built with dwarf2 support, the debugging annotations are
+generated, and can always be stripped from production code as needed.
+
+it's easier to download the pre-built html and pdf documentation packages
+than to build them, which require some arcance image processing utilities.
+these remain available at: download.savannah.gnu.org/releases/avr-libc
+
+################################################################################
+
+AVRDUDE and the Olimex AVR-ISP-MK2 programmer : avrdude-6.4
+
+################################################################################
+
+installing AVRDUDE and updating the Olimex AVR-ISP-MK2 firmware requires
+that we return to using MacPorts and the native (Xcode) compilers.
+
+> export CC="clang -std=c11"; export CXX="clang++ -std=c++17"
+> export CPP="$CC -E"; export CXXCPP="$CXX -E"
+
+set C[XX]FLAGS to something reasonable for native code generation:
+
+> export C[XX]FLAGS="-pipe -Wall -O2 [-march=native]"
+
+--
+
+the Olimex AVR-ISP-MK2 programmer:
+
+https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2\
+/open-source-hardware
+
+there are more sophisticated development boards and gear for AVR micros,
+but this is a cheap way to get started. it's possible to program a device
+using nothing but the programmer's USB to ICSP connection, which supplies
+the required power, along with a few cheap components on a breadboard.
+
+--
+
+## avrdude-7.0 @ github.com/avrdudes/avrdude
+
+previously hosted @ download.savannah.gnu.org/releases/avrdude
+
+note: there is an issue with the avrdude-6.x series, and apparently, the
+current avrdude-7.0 release, affecting the Olimex AVR-ISP-MK2 - itself a
+clone of the Atmel AVR ISP mkII - requiring a patch:
+
+https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2/\
+resources/endpointdetect_pass1.patch
+
+
+install the avrdude package with MacPorts. libusb, libftdi1, etc., are too
+much work to build from source. in any case, these ports will be reused if
+rebuilding avrdude from source (and dfu-programmer: see below).
+
+> port deps avrdude
+
+Full Name: avrdude @6.4_0
+Library Dependencies: libusb, ncurses, libftdi1, libelf, readline
+
+> [sudo] port install avrdude
+
+the system-wide configuration file, assuming MacPorts has been installed
+in the standard location, is: '/opt/local/etc/avrdude.conf'
+
+
+while this port does have patches applied, it hasn't been patched for the
+Olimex AVR-ISP-MK2 - which won't work. we need to uninstall avrdude, while
+keeping its dependencies, to rebuild it from (patched) source:
+
+> [sudo] port uninstall avrdude
+
+the dependent ports required to build avrdude (as well as dfu-programmer)
+remain installed. note, however, that these dependencies may be classified
+as 'leaves' by the MacPorts database if they were not explicity installed
+and have no other dependent ports. in the event of tidying up unused ports
+for example, a command like:
+
+# > [sudo] port uninstall --follow-dependencies leaves
+
+may remove some of the required packages used by the custom avrdude build.
+to fix this, the dependent ports can be marked as 'requested'. to display
+the (immediate) dependencies:
+
+> port deps avrdude
+
+might, for example, list: "libusb, ncurses, libftdi1, libelf, readline"
+this list of packages can be marked as 'requested' with:
+
+> [sudo] port setrequested libusb ncurses libftdi1 libelf readline
+
+to keep the installed MacPorts lean, query: "port deps <port>" on each of
+these ports, and compare with the results of: "port list leaves"
+for example: "libftdi1" wasn't available as a pre-built binary, and had a
+build dependency on: "boost176" - a 'leaf' port that could be uninstalled.
+take care to only remove build dependencies - if in doubt, leave it be.
+
+
+## avrdude-6.4 @ download.savannah.gnu.org/releases/avrdude
+
+avrdude-6.4 will be rebuilt using port file information and patches from:
+github.com/macports/macports-ports/tree/master/cross/avrdude
+
+and the source: avrdude-6.4.tar.gz from:
+download.savannah.gnu.org/releases/avrdude/avrdude-6.4.tar.gz
+
+pre-built documentation can be downloaded if lacking a TeX distribution,
+or texi2html as: avrdude-doc-6.4.tar.gz (html) and: avrdude-doc-6.4.pdf
+
+apply the following patch files in the top-level source directory:
+
+> patch -b -i dynamic_lookup-11.patch
+> patch -b -i patch-stk500v2.diff
+> patch -b -i endpointdetect_pass1.patch
+
+the configure script doesn't use pkg-config, so we need to pass the port
+header and library dependency locations via CPPFLAGS, LDFLAGS:
+
+> ../configure CPPFLAGS="-I/opt/local/include" LDFLAGS="-L/opt/local/lib" \
+--prefix=$CROSSDIR --disable-parport [--enable-doc]
+> make; make install; [rehash]
+
+--
+
+## dfu-programmer @ github.com/dfu-programmer/dfu-programmer
+
+The Olimex AVR-ISP-MK2 has firmware suited for 'AVR Studio'. for use with
+avrdude, the firmware of the device must be updated via: 'dfu-programmer'
+Olimex provides a firmware update: libUSB-AVRISP-MKII.hex
+
+https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2/\
+resources/AVR-ISP-MK2-Firmware-WindowsDrivers.zip
+
+directory: AVR-ISP-MK2-Firmware-WindowsDrivers/Firmware_Drivers/\
+FIRMWARE-FOR-AVRDUDE-LIBUSB/libUSB-AVRISP-MKII.hex
+
+file: libUSB-AVRISP-MKII.hex
+README.txt: "based on latest stable LUFA as of 06/01/2016"
+
+
+the easiest option is to simply install the dfu-programmer-0.7.2 port:
+it can always be uninstalled after the firmware update is applied.
+
+> [sudo] port install dfu-programmer
+
+to build and install dfu-programmer from source, clone the master branch
+and bootstrap the build infrastructure with: 'sh ./bootstrap' in the top
+level directory. pkg-config is used to locate libusb:
+
+> ../configure --prefix=$CROSSDIR
+> make; make install; [rehash]
+
+
+connect the AVR-ISP-MK2 programmer to a USB port - possibly via a USB-B to
+USB-A adapter - and press the clearly marked 'upgrade' button. This should
+turn the (orange and red) LEDs off. the programmer itself is an AT90USB162
+device, upgraded with the following commands:
+
+> dfu-programmer at90usb162 erase
+> dfu-programmer at90usb162 flash libUSB-AVRISP-MKII.hex
+> dfu-programmer at90usb162 start
+
+at this point the LEDs should be on again. it is ready for use by avrdude,
+with '-c avrisp2' as the programmer ID, and '-P usb' as the device port.
+
+--
+
+the simple board being used has a 40 PDIP ZIF socket, and is connected to
+the programmer via a 10-pin ICSP header. the programmer also provides the
+power with the jumpers set to 5V:ON (the default). the following test was
+performed with an AVR ATmega32 MCU:
+
+> avrdude -c avrisp2 -p m32 -P usb
+
+avrdude: AVR device initialized and ready to accept instructions
+
+Reading | ################################################## | 100% 0.00s
+
+avrdude: Device signature = 0x1e9502 (probably m32)
+
+avrdude: safemode: Fuses OK (E:FF, H:99, L:E1)
+
+avrdude done.  Thank you.
+
+################################################################################
