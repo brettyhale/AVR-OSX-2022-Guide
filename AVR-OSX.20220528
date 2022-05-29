@@ -266,7 +266,7 @@ since avr-gcc was built with dwarf2 support, the debugging annotations are
 generated, and can always be stripped from production code as needed.
 
 it's easier to download the pre-built html and pdf documentation packages
-than to build them, which require some arcance image processing utilities.
+than to build them, which require some arcane image processing utilities.
 these remain available at: download.savannah.gnu.org/releases/avr-libc
 
 ################################################################################
